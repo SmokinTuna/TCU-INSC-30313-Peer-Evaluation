@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Streamlit secrets (never commit real credentials)
+.streamlit/secrets.toml
+
+# Google service-account key files (keep private; use st.secrets instead).
+# Tip: if you keep a local copy of the downloaded key, put it in secrets/.
+*service-account*.json
+*service_account*.json
+gcp-*.json
+credentials.json
+client_secret*.json
+secrets/
+
+# Submitted evaluation data (keep private; regenerated at runtime)
+data/evaluations.csv
+
+# Roster is uploaded per-semester via the Admin page (regenerated as a sample)
+data/roster.xlsx
+data/roster_meta.json
+data/app_settings.json
+~$*.xlsx
+
+# Logs / runtime artifacts
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

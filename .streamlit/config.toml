@@ -1,0 +1,13 @@
+# Force a light, on-brand theme regardless of the viewer's OS/browser dark mode.
+# This keeps all text legible (no dark input boxes or invisible labels).
+[theme]
+base = "light"
+primaryColor = "#4D1979"          # TCU purple (buttons, selected radios, sliders)
+backgroundColor = "#FFFFFF"        # main canvas
+secondaryBackgroundColor = "#F4F4F6"  # cards, sidebar, inputs
+textColor = "#1F2330"              # body text
+font = "sans serif"
+
+[client]
+# Hide the default hamburger/toolbar clutter for a cleaner course-app feel.
+toolbarMode = "minimal"
