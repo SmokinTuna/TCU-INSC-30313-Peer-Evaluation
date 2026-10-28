@@ -98,15 +98,60 @@ def student_summary(df: pd.DataFrame, round_name: str | None = None) -> pd.DataF
     return grouped[columns].sort_values(["section", "team", "evaluatee_name"]).reset_index(drop=True)
 
 
+# Columns returned by ``comments``. ``evaluatee_email`` is required: Team View
+# attaches each comment to the student who received it, and names are not unique.
+COMMENT_COLUMNS: list[str] = [
+    "round",
+    "section",
+    "team",
+    "evaluator_name",
+    "evaluatee_name",
+    "evaluatee_email",
+    "comments",
+]
+
+
 def comments(df: pd.DataFrame, round_name: str | None = None) -> pd.DataFrame:
-    """Non-empty written comments, with context columns."""
-    cols = ["round", "section", "team", "evaluator_name", "evaluatee_name", "comments"]
+    """Non-empty written comments, with context columns.
+
+    Always returns ``COMMENT_COLUMNS``, including when there are no evaluations
+    or no written comments. ``evaluatee_email`` is kept so comments can be
+    matched to a roster member. Evaluator email is omitted; instructor views
+    that list the writer continue to use ``evaluator_name`` only.
+    """
+    if df.empty or "comments" not in df.columns:
+        return pd.DataFrame(columns=COMMENT_COLUMNS)
+
     data = _filter_round(df, round_name)
     if data.empty:
-        return pd.DataFrame(columns=cols)
-    has_text = data["comments"].astype(str).str.strip().replace("nan", "").ne("")
-    out = data[has_text]
-    return out[cols].reset_index(drop=True)
+        return pd.DataFrame(columns=COMMENT_COLUMNS)
+
+    has_text = data["comments"].astype(str).str.strip().replace({"nan": "", "<NA>": ""}).ne("")
+    out = data.loc[has_text].copy()
+    for col in COMMENT_COLUMNS:
+        if col not in out.columns:
+            out[col] = pd.NA
+    return out[COMMENT_COLUMNS].reset_index(drop=True)
+
+
+def comments_for_evaluatee(comments_df: pd.DataFrame, email: str) -> pd.DataFrame:
+    """Comment rows about one student, matched on normalized email.
+
+    Comparison is case-insensitive and ignores surrounding whitespace, matching
+    how roster and response emails are stored. An empty frame (no evaluations,
+    no written comments, or no comment about this student) is returned with the
+    comments schema and does not raise if ``evaluatee_email`` is absent.
+    """
+    columns = list(COMMENT_COLUMNS)
+    if comments_df.empty or "evaluatee_email" not in comments_df.columns:
+        return pd.DataFrame(columns=columns)
+    target = str(email or "").strip().lower()
+    if not target:
+        return comments_df.iloc[0:0].reset_index(drop=True)
+    emails = comments_df["evaluatee_email"].astype(str).str.strip().str.lower()
+    # Stored blanks become the literal "nan" / "<NA>" after astype(str).
+    emails = emails.where(~emails.isin({"nan", "<na>", "none"}), other="")
+    return comments_df.loc[emails == target].reset_index(drop=True)
 
 
 def missing_survey(roster: pd.DataFrame, df: pd.DataFrame, round_name: str) -> pd.DataFrame:

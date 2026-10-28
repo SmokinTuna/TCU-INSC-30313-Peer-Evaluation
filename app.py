@@ -589,12 +589,12 @@ def page_team_view() -> None:
                         f"**Fair Share:** {int(member['fair_share_yes'])} Yes · "
                         f"{int(member['fair_share_no'])} No"
                     )
-                    member_comments = []
-                    if not cdf.empty:
-                        member_comments = [
-                            f"_{config.round_label(r['round'])}_: {r['comments']}"
-                            for _, r in cdf[cdf["evaluatee_email"] == member["email"]].iterrows()
-                        ]
+                    member_comments = [
+                        f"_{config.round_label(r['round'])}_: {r['comments']}"
+                        for _, r in evaluation.comments_for_evaluatee(
+                            cdf, member["email"]
+                        ).iterrows()
+                    ]
                     if member_comments:
                         with st.expander(f"Comments ({len(member_comments)})"):
                             for c in member_comments:
