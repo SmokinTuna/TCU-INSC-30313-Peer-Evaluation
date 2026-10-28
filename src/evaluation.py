@@ -110,6 +110,87 @@ COMMENT_COLUMNS: list[str] = [
     "comments",
 ]
 
+_BLANK_TEXT = {"", "nan", "<na>", "nat"}
+
+
+def _blank_text(value) -> bool:
+    """True when a cell has no usable text.
+
+    Scalar checks only. This deliberately does not use the ``.str`` accessor:
+    a duplicated header makes ``frame[column]`` a DataFrame, and an integer
+    column (CSV inference of section ``036``) has no string accessor. Both
+    raised AttributeError on the Team View comments path.
+    """
+    if isinstance(value, pd.Series):
+        return False
+    try:
+        if value is None or pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        return False
+    return str(value).strip().lower() in _BLANK_TEXT
+
+
+def _norm_email_value(value) -> str:
+    """Lowercase email, or ``""`` when the cell is blank.
+
+    A duplicated ``email`` column makes a roster row return a Series. The
+    first non-blank address is the one that was stored.
+    """
+    if isinstance(value, pd.Series):
+        for item in value.tolist():
+            text = _norm_email_value(item)
+            if text:
+                return text
+        return ""
+    if _blank_text(value):
+        return ""
+    text = str(value).strip().lower()
+    if text == "none":
+        return ""
+    return text
+
+
+def _label_key(value) -> str:
+    """Compare section/team labels that CSV or Sheets may store as numbers.
+
+    ``"036"``, ``36``, and ``"36.0"`` are the same course section. Names such
+    as ``"Team Frog"`` are compared as trimmed text.
+    """
+    if _blank_text(value):
+        return ""
+    text = str(value).strip()
+    if text.endswith(".0") and text[:-2].isdigit():
+        text = text[:-2]
+    if text.isdigit():
+        return str(int(text))
+    return text
+
+
+def collapse_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Return ``df`` with one column per header name.
+
+    A repeated header (``evaluatee_email`` twice) makes ``df[name]`` a
+    DataFrame. Calling ``.str`` on that DataFrame raises
+    ``AttributeError: 'DataFrame' object has no attribute 'str'``. Each
+    repeated name keeps the first non-blank cell in the row.
+    """
+    if df is None or not isinstance(df, pd.DataFrame) or not df.columns.has_duplicates:
+        return df
+    collapsed: dict[str, pd.Series] = {}
+    for name in list(dict.fromkeys(df.columns)):
+        block = df.loc[:, name]
+        if isinstance(block, pd.Series):
+            collapsed[name] = block
+            continue
+        chosen = block.iloc[:, 0].copy()
+        for position in range(1, block.shape[1]):
+            candidate = block.iloc[:, position]
+            blank = chosen.map(_blank_text).astype(bool)
+            chosen = chosen.mask(blank, candidate)
+        collapsed[name] = chosen
+    return pd.DataFrame(collapsed, index=df.index)
+
 
 def comments(df: pd.DataFrame, round_name: str | None = None) -> pd.DataFrame:
     """Non-empty written comments, with context columns.
@@ -119,39 +200,56 @@ def comments(df: pd.DataFrame, round_name: str | None = None) -> pd.DataFrame:
     matched to a roster member. Evaluator email is omitted; instructor views
     that list the writer continue to use ``evaluator_name`` only.
     """
-    if df.empty or "comments" not in df.columns:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty or "comments" not in df.columns:
         return pd.DataFrame(columns=COMMENT_COLUMNS)
 
-    data = _filter_round(df, round_name)
+    data = _filter_round(collapse_duplicate_columns(df), round_name)
     if data.empty:
         return pd.DataFrame(columns=COMMENT_COLUMNS)
 
-    has_text = data["comments"].astype(str).str.strip().replace({"nan": "", "<NA>": ""}).ne("")
+    has_text = data["comments"].map(_blank_text).eq(False)
     out = data.loc[has_text].copy()
     for col in COMMENT_COLUMNS:
         if col not in out.columns:
             out[col] = pd.NA
-    return out[COMMENT_COLUMNS].reset_index(drop=True)
+    return out.loc[:, COMMENT_COLUMNS].reset_index(drop=True)
+
+
+def comments_for_team(comments_df: pd.DataFrame, section: str, team: str) -> pd.DataFrame:
+    """Comment rows for one roster section and team.
+
+    Module-level function. Section ``036`` matches evaluations stored as
+    ``36`` after CSV type inference, and team ``"2"`` matches ``2``.
+    """
+    if comments_df is None or not isinstance(comments_df, pd.DataFrame) or comments_df.empty:
+        return pd.DataFrame(columns=COMMENT_COLUMNS)
+    frame = collapse_duplicate_columns(comments_df)
+    if "section" not in frame.columns or "team" not in frame.columns:
+        return pd.DataFrame(columns=COMMENT_COLUMNS)
+    section_key = _label_key(section)
+    team_key = _label_key(team)
+    mask = frame["section"].map(_label_key).eq(section_key) & frame["team"].map(_label_key).eq(team_key)
+    return frame.loc[mask].reset_index(drop=True)
 
 
 def comments_for_evaluatee(comments_df: pd.DataFrame, email: str) -> pd.DataFrame:
     """Comment rows about one student, matched on normalized email.
 
-    Comparison is case-insensitive and ignores surrounding whitespace, matching
-    how roster and response emails are stored. An empty frame (no evaluations,
-    no written comments, or no comment about this student) is returned with the
-    comments schema and does not raise if ``evaluatee_email`` is absent.
+    Module-level function, not a DataFrame method. Call it as
+    ``evaluation.comments_for_evaluatee(frame, email)``. An empty frame (no
+    evaluations, no written comments, or no comment about this student) is
+    returned with the comments schema.
     """
-    columns = list(COMMENT_COLUMNS)
-    if comments_df.empty or "evaluatee_email" not in comments_df.columns:
-        return pd.DataFrame(columns=columns)
-    target = str(email or "").strip().lower()
+    if comments_df is None or not isinstance(comments_df, pd.DataFrame) or comments_df.empty:
+        return pd.DataFrame(columns=COMMENT_COLUMNS)
+    frame = collapse_duplicate_columns(comments_df)
+    if "evaluatee_email" not in frame.columns:
+        return pd.DataFrame(columns=COMMENT_COLUMNS)
+    target = _norm_email_value(email)
     if not target:
-        return comments_df.iloc[0:0].reset_index(drop=True)
-    emails = comments_df["evaluatee_email"].astype(str).str.strip().str.lower()
-    # Stored blanks become the literal "nan" / "<NA>" after astype(str).
-    emails = emails.where(~emails.isin({"nan", "<na>", "none"}), other="")
-    return comments_df.loc[emails == target].reset_index(drop=True)
+        return frame.iloc[0:0].reset_index(drop=True)
+    emails = frame["evaluatee_email"].map(_norm_email_value)
+    return frame.loc[emails.eq(target)].reset_index(drop=True)
 
 
 def missing_survey(roster: pd.DataFrame, df: pd.DataFrame, round_name: str) -> pd.DataFrame:

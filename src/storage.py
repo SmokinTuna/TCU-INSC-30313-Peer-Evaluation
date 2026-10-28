@@ -411,6 +411,27 @@ def team_members(roster: pd.DataFrame, section: str, team: str) -> pd.DataFrame:
 # --------------------------------------------------------------------------- #
 # Evaluations
 # --------------------------------------------------------------------------- #
+def _align_evaluations(df: pd.DataFrame) -> pd.DataFrame:
+    """Return evaluations with the canonical columns, one column per name.
+
+    CSV reads keep text (``dtype=str``) so section ``036`` is not inferred as
+    the integer ``36``. A repeated header is collapsed in memory; the stored
+    sheet or file is not rewritten.
+    """
+    columns = config.EVALUATION_COLUMNS
+    if df.empty and (df.columns.empty or set(columns).isdisjoint(df.columns)):
+        return pd.DataFrame(columns=columns)
+    aligned = df.copy()
+    for col in columns:
+        if col not in aligned.columns:
+            aligned[col] = pd.NA
+    extra = [c for c in dict.fromkeys(aligned.columns) if c not in columns]
+    # Import inside the function: evaluation does not import storage.
+    from .evaluation import collapse_duplicate_columns
+
+    return collapse_duplicate_columns(aligned.loc[:, columns + extra])
+
+
 def load_evaluations() -> pd.DataFrame:
     """Load all submitted evaluations with the expected schema."""
     columns = config.EVALUATION_COLUMNS
@@ -418,20 +439,14 @@ def load_evaluations() -> pd.DataFrame:
         df = gsheets.read_df(config.GS_RESPONSES_TAB)
         if df.empty:
             return pd.DataFrame(columns=columns)
-        for col in columns:
-            if col not in df.columns:
-                df[col] = pd.NA
-        extra = [c for c in df.columns if c not in columns]
-        return df[columns + extra]
+        return _align_evaluations(df)
 
     if not config.EVALUATIONS_FILE.exists():
         return pd.DataFrame(columns=columns)
-    df = pd.read_csv(config.EVALUATIONS_FILE)
-    for col in columns:
-        if col not in df.columns:
-            df[col] = pd.NA
-    extra = [c for c in df.columns if c not in columns]
-    return df[columns + extra]
+    # dtype=str preserves section codes such as 036. Default inference turns
+    # that cell into the integer 36, which then fails to match the roster.
+    df = pd.read_csv(config.EVALUATIONS_FILE, dtype=str)
+    return _align_evaluations(df)
 
 
 def append_evaluation(row: dict) -> None:

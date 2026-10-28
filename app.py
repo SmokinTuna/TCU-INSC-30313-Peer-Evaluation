@@ -560,9 +560,7 @@ def page_team_view() -> None:
 
     members = storage.team_members(roster, section, team)
     table = evaluation.team_table(df, members, round_code)
-    cdf = evaluation.comments(df, round_code)
-    if not cdf.empty:
-        cdf = cdf[(cdf["section"] == section) & (cdf["team"] == team)]
+    cdf = evaluation.comments_for_team(evaluation.comments(df, round_code), section, team)
 
     st.markdown(f"#### {team} — Section {section}")
     if table.empty:
